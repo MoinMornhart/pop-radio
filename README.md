@@ -100,6 +100,8 @@ Browser dürfen fremde Websites nicht direkt auslesen (CORS). Deshalb erledigt d
 
 **Grenzen:** Manche Sender (z. B. Antenne Bayern) laden ihre News nur per JavaScript nach. Dann zeigt das Popup keine News an. Die radio.de-Schnittstelle ist nicht offiziell dokumentiert und kann sich jederzeit ändern.
 
+**HTTPS (optional):** Setzt du `TLS_CERT` und `TLS_KEY` auf die Pfade zu Zertifikat und Schlüssel, läuft der Server über HTTPS. Im LXC trägst du die beiden Werte als `Environment=` in `/etc/systemd/system/pop-radio.service` ein. Alternativ schaltest du einen Reverse-Proxy davor.
+
 > ⚠️ Der Server ruft beliebige URLs ab, die man ihm gibt. Betreibe ihn nur in deinem Heimnetz und stell ihn nicht offen ins Internet.
 
 ## Projektstruktur

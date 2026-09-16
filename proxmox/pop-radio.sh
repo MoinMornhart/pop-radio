@@ -12,7 +12,6 @@ set -euo pipefail
 APP="Pop Radio"
 REPO_URL="${REPO_URL:-https://github.com/MoinMornhart/pop-radio.git}"
 BRANCH="${BRANCH:-main}"
-RAW_URL="${RAW_URL:-https://raw.githubusercontent.com/MoinMornhart/pop-radio/${BRANCH}}"
 
 CT_HOSTNAME="${CT_HOSTNAME:-pop-radio}"
 CORES="${CORES:-1}"
@@ -94,8 +93,10 @@ ok "Netzwerk bereit"
 
 # ---------- App installieren ----------
 msg "Installiere $APP im Container (dauert 1–2 Minuten) …"
-pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null"
-pct exec "$CTID" -- bash -c "curl -fsSL '${RAW_URL}/scripts/install.sh' | REPO_URL='${REPO_URL}' BRANCH='${BRANCH}' PORT='${PORT}' bash"
+pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq git curl ca-certificates >/dev/null"
+# Repo klonen und den Installer aus dem Klon starten (nichts wird per curl | bash ausgeführt)
+pct exec "$CTID" -- git clone -q --branch "$BRANCH" "$REPO_URL" /opt/pop-radio
+pct exec "$CTID" -- env REPO_URL="$REPO_URL" BRANCH="$BRANCH" PORT="$PORT" bash /opt/pop-radio/scripts/install.sh
 
 IP="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
 echo

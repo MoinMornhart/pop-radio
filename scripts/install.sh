@@ -27,8 +27,13 @@ if [[ "$(node_major)" -lt 18 ]]; then
   apt-get install -y -qq nodejs >/dev/null 2>&1 || true
 fi
 if [[ "$(node_major)" -lt 18 ]]; then
+  # NodeSource als signierte apt-Quelle einrichten (statt fremdes Skript per curl | bash auszuführen)
   msg "Installiere Node.js 22 über NodeSource …"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+  apt-get install -y -qq gnupg >/dev/null
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" >/etc/apt/sources.list.d/nodesource.list
+  apt-get update -qq
   apt-get install -y -qq nodejs >/dev/null
 fi
 ok "Node.js $(node -v)"

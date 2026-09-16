@@ -2,6 +2,7 @@
 // Start: node server.js  →  http://localhost:3000
 
 const http = require('http');
+const https = require('https');
 const net = require('net');
 const tls = require('tls');
 const fs = require('fs');
@@ -40,9 +41,27 @@ function decodeEntities(s = '') {
 
 const stripTags = (s = '') => decodeEntities(decodeEntities(s).replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
 
+// Attribute mit einem festen Ausdruck durchgehen (keine dynamische RegExp)
+const ATTR_RE = /([^\s=<>"'/]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+
 function attr(tag, name) {
-  const m = tag.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
-  return m ? decodeEntities(m[2] ?? m[3] ?? m[4]) : null;
+  const wanted = name.toLowerCase();
+  for (const m of tag.matchAll(ATTR_RE)) {
+    if (m[1].toLowerCase() === wanted) return decodeEntities(m[2] ?? m[3] ?? m[4]);
+  }
+  return null;
+}
+
+// Inhalt des ersten <name …>…</name> in einem XML-Block (XML unterscheidet Groß-/Kleinschreibung)
+function innerTag(block, name) {
+  const open = `<${name}`;
+  let i = block.indexOf(open);
+  while (i >= 0 && !/[\s>/]/.test(block[i + open.length] || '')) i = block.indexOf(open, i + 1);
+  if (i < 0) return null;
+  const start = block.indexOf('>', i);
+  if (start < 0 || block[start - 1] === '/') return null; // selbstschließend, z. B. <link href="…"/>
+  const end = block.indexOf(`</${name}>`, start);
+  return end < 0 ? null : block.slice(start + 1, end);
 }
 
 function metaContent(html, key) {
@@ -461,10 +480,7 @@ async function detectStation(input) {
 async function readFeed(feedUrl) {
   const { text } = await fetchText(feedUrl);
   const blocks = text.match(/<item\b[\s\S]*?<\/item>/gi) || text.match(/<entry\b[\s\S]*?<\/entry>/gi) || [];
-  const tag = (block, name) => {
-    const m = block.match(new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`, 'i'));
-    return m ? m[1] : null;
-  };
+  const tag = innerTag;
   const feedTitle = stripTags(tag(text.replace(/<(item|entry)\b[\s\S]*/i, ''), 'title') || '');
   const items = blocks.slice(0, 25).map((b) => {
     let link = stripTags(tag(b, 'link') || '');
@@ -494,9 +510,18 @@ function sendJson(res, status, obj) {
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 
-function serveStatic(req, res, pathname) {
-  const file = path.normalize(path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname));
-  if (!file.startsWith(PUBLIC_DIR)) return sendJson(res, 403, { error: 'Verboten' });
+// Auslieferbare Dateien einmal beim Start einlesen. Anfragen werden nur nachgeschlagen
+// und nie zu Dateipfaden zusammengesetzt (neue Dateien brauchen einen Neustart).
+function listFiles(dir, prefix = '') {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory()
+    ? listFiles(path.join(dir, e.name), `${prefix}/${e.name}`)
+    : [[`${prefix}/${e.name}`, path.join(dir, e.name)]]);
+}
+const STATIC_FILES = new Map(listFiles(PUBLIC_DIR));
+
+function serveStatic(res, pathname) {
+  const file = STATIC_FILES.get(pathname === '/' ? '/index.html' : pathname);
+  if (!file) return sendJson(res, 404, { error: 'Nicht gefunden' });
   fs.readFile(file, (err, data) => {
     if (err) return sendJson(res, 404, { error: 'Nicht gefunden' });
     res.writeHead(200, { 'Content-Type': (MIME[path.extname(file)] || 'application/octet-stream') + '; charset=utf-8' });
@@ -504,9 +529,10 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
-  const { pathname, searchParams } = new URL(req.url, `http://${req.headers.host}`);
+async function handleRequest(req, res) {
   try {
+    // Feste Basis statt Host-Header: ein kaputter Host darf den Server nicht abstürzen lassen
+    const { pathname, searchParams } = new URL(req.url, 'http://localhost');
     if (pathname === '/api/station') {
       return sendJson(res, 200, await detectStation(searchParams.get('url')));
     }
@@ -527,12 +553,19 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, await readFeed(normalizeInput(searchParams.get('feed'))));
     }
     if (pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'Unbekannter Endpunkt' });
-    return serveStatic(req, res, pathname);
+    return serveStatic(res, pathname);
   } catch (e) {
-    return sendJson(res, 500, { error: e.message });
+    if (!res.headersSent) sendJson(res, 500, { error: e.message });
   }
-});
+}
+
+// HTTPS, wenn TLS_CERT und TLS_KEY gesetzt sind. Sonst HTTP – gedacht fürs Heimnetz
+// (für den Zugriff von außen einen Reverse-Proxy mit HTTPS davorschalten).
+const useTls = Boolean(process.env.TLS_CERT && process.env.TLS_KEY);
+const server = useTls
+  ? https.createServer({ cert: fs.readFileSync(process.env.TLS_CERT), key: fs.readFileSync(process.env.TLS_KEY) }, handleRequest)
+  : http.createServer(handleRequest); // nosemgrep: problem-based-packs.insecure-transport.js-node.using-http-server.using-http-server
 
 server.listen(PORT, HOST, () => {
-  console.log(`🎧 Pop Radio läuft auf http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`🎧 Pop Radio läuft auf ${useTls ? 'https' : 'http'}://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
 });
