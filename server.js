@@ -258,10 +258,115 @@ function scrapeHeadlines(html, base) {
   return items;
 }
 
+// ---------- radio.de / radio.net ----------
+
+const RADIO_DE_API = 'https://prod.radio-api.net';
+const RADIO_DE_LANG = { de: 'de-DE', at: 'de-AT', net: 'en-GB', fr: 'fr-FR', it: 'it-IT', es: 'es-ES', pt: 'pt-PT', pl: 'pl-PL', dk: 'da-DK', se: 'sv-SE' };
+
+// "radio.de/s/1live" → { id: "1live", tld: "de" }
+function parseRadioDe(input) {
+  try {
+    const u = new URL(normalizeInput(input));
+    const host = u.hostname.match(/(?:^|\.)radio\.(de|net|at|fr|it|es|pt|pl|dk|se)$/);
+    const id = u.pathname.match(/^\/s\/([^/?#]+)/);
+    return host && id ? { id: decodeURIComponent(id[1]).toLowerCase(), tld: host[1] } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function radioDeApi(pathAndQuery, tld = 'de') {
+  const res = await fetch(`${RADIO_DE_API}${pathAndQuery}`, {
+    headers: { 'User-Agent': UA, 'Accept-Language': RADIO_DE_LANG[tld] || 'de-DE' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`radio.de antwortet mit HTTP ${res.status}`);
+  return res.json();
+}
+
+async function radioDeNowPlaying(id) {
+  try {
+    const [entry] = await radioDeApi(`/stations/now-playing?stationIds=${encodeURIComponent(id)}`);
+    return entry?.title?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function findNews(html, url) {
+  if (!html) return { feeds: [], headlines: [] };
+  let feeds = findFeeds(html, url);
+  if (!feeds.length) feeds = await probeFeeds(url);
+  return { feeds, headlines: feeds.length ? [] : scrapeHeadlines(html, url) };
+}
+
+async function detectRadioDe({ id, tld }) {
+  const [st] = await radioDeApi(`/stations/details?stationIds=${encodeURIComponent(id)}`, tld);
+  if (!st) throw new Error(`Sender "${id}" gibt es auf radio.${tld} nicht`);
+
+  // Homepage des Senders nur noch für die News laden
+  let html = '';
+  let homepage = st.homepageUrl || null;
+  if (homepage) {
+    try {
+      const r = await fetchText(homepage);
+      html = r.text;
+      homepage = r.url;
+    } catch (e) {
+      console.warn('Homepage nicht erreichbar:', homepage, e.message);
+    }
+  }
+
+  const format = (type = '') => (/mpeg|mp3/i.test(type) ? 'MP3' : /aac/i.test(type) ? 'AAC' : /ogg/i.test(type) ? 'OGG' : type.split('/').pop()?.toUpperCase() || 'Stream');
+  const streams = (st.streams || [])
+    .filter((s) => s.url && s.status !== 'INVALID')
+    .sort((a, b) => Number(/mpeg/.test(b.contentFormat)) - Number(/mpeg/.test(a.contentFormat)));
+  const formatCount = {};
+  const channels = streams.map((s) => ({
+    name: streams.length > 1 ? `${st.name} · ${format(s.contentFormat)}` : st.name,
+    stream: s.url,
+    logo: null,
+    tags: (st.genres || []).join(','),
+    codec: format(s.contentFormat),
+    bitrate: null,
+  }));
+  for (const c of channels) { // doppelte Namen durchnummerieren
+    formatCount[c.name] = (formatCount[c.name] || 0) + 1;
+    if (formatCount[c.name] > 1) c.name += ` (${formatCount[c.name]})`;
+  }
+
+  const pageUrl = `https://www.radio.${tld}/s/${st.id}`;
+  return {
+    key: pageUrl,
+    source: `radio.${tld}`,
+    radioDeId: st.id,
+    radioDeUrl: pageUrl,
+    homepage: homepage || pageUrl,
+    host: `radio.${tld}`,
+    name: st.name,
+    description: st.shortDescription || st.description || '',
+    genres: st.genres || [],
+    city: st.city || null,
+    logo: st.logo300x300 || st.logo175x175 || null,
+    channels,
+    ...(await findNews(html, homepage)),
+  };
+}
+
 async function detectStation(input) {
   const homepage = normalizeInput(input);
   const cached = stationCache.get(homepage);
   if (cached && Date.now() - cached.time < 30 * 60 * 1000) return cached.data;
+
+  const radioDe = parseRadioDe(input);
+  if (radioDe) {
+    const data = await detectRadioDe(radioDe);
+    stationCache.set(homepage, { time: Date.now(), data });
+    return data;
+  }
+  if (/(^|\.)radio\.(de|net|at|fr|it|es|pt|pl|dk|se)$/.test(bareHost(homepage))) {
+    throw new Error('Bitte den Link einer Senderseite einfügen, z. B. radio.de/s/1live');
+  }
 
   let html = '';
   let finalUrl = homepage;
@@ -323,8 +428,7 @@ async function detectStation(input) {
     }
   }
 
-  let feeds = findFeeds(html, finalUrl);
-  if (!feeds.length) feeds = await probeFeeds(finalUrl);
+  const news = await findNews(html, finalUrl);
 
   const iconTag = (html.match(/<link\b[^>]*rel=["'][^"']*(apple-touch-icon|icon)[^"']*["'][^>]*>/i) || [])[0];
   const logo =
@@ -334,6 +438,8 @@ async function detectStation(input) {
     `https://www.google.com/s2/favicons?domain=${host}&sz=128`;
 
   const data = {
+    key: finalUrl,
+    source: host,
     homepage: finalUrl,
     host,
     name: (matches[0] && score(matches[0]) === 2 ? matches[0].name.trim() : null) ||
@@ -341,9 +447,10 @@ async function detectStation(input) {
       (shortTitle.length <= 30 ? shortTitle : null) || channels[0]?.name || host,
     description: stripTags(metaContent(html, 'og:description') || metaContent(html, 'description') || ''),
     logo,
+    genres: [],
+    city: null,
     channels,
-    feeds,
-    headlines: feeds.length ? [] : scrapeHeadlines(html, finalUrl),
+    ...news,
   };
   stationCache.set(homepage, { time: Date.now(), data });
   return data;
@@ -404,6 +511,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, await detectStation(searchParams.get('url')));
     }
     if (pathname === '/api/nowplaying') {
+      // radio.de kennt den Titel meist auch dann, wenn der Stream nur den Slogan sendet
+      const rid = searchParams.get('rid');
+      const title = rid && (await radioDeNowPlaying(rid));
+      if (title) {
+        return sendJson(res, 200, { ok: true, source: 'radio.de', streamTitle: title, ...splitTitle(title, searchParams.get('name')) });
+      }
       const stream = await resolveStream(normalizeInput(searchParams.get('stream')));
       const icy = await readIcy(stream);
       if (!icy) return sendJson(res, 200, { ok: false, stream });

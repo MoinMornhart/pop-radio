@@ -11,18 +11,18 @@
   <main class="app" id="app">
     <header class="hero">
       <h1><span class="logo">📻</span> Pop Radio</h1>
-      <p>Füge die Website eines Radiosenders ein. Im Popup siehst du dann, welcher Song gerade läuft, und die neuesten News.</p>
+      <p>Such deinen Sender auf <a href="https://www.radio.de" target="_blank" rel="noopener">radio.de</a> und kopier die Adresse hierher. Im Popup siehst du dann, welcher Song gerade läuft, und die neuesten News.</p>
       <form id="add-form" class="add-form" autocomplete="off">
-        <input id="url-input" type="text" placeholder="z. B. 1live.de, radiobob.de, bigfm.de …" aria-label="Website des Radiosenders">
+        <input id="url-input" type="text" placeholder="radio.de-Link einfügen, z. B. https://www.radio.de/s/1live" aria-label="radio.de-Adresse des Senders">
         <button type="submit" id="add-btn">Hinzufügen</button>
       </form>
       <p class="hint" id="status"></p>
       <div class="examples">
         Beispiele:
-        <button type="button" data-example="https://www.radiobob.de">RADIO BOB!</button>
-        <button type="button" data-example="https://www.1live.de">1LIVE</button>
-        <button type="button" data-example="https://www.antenne.de">ANTENNE BAYERN</button>
-        <button type="button" data-example="https://www.fm4.orf.at">FM4</button>
+        <button type="button" data-example="https://www.radio.de/s/1live">1LIVE</button>
+        <button type="button" data-example="https://www.radio.de/s/antennebayern">ANTENNE BAYERN</button>
+        <button type="button" data-example="https://www.radio.de/s/bigfm">bigFM</button>
+        <button type="button" data-example="https://www.radio.de/s/fm4">FM4</button>
       </div>
     </header>
 

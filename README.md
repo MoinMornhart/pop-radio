@@ -1,12 +1,14 @@
 # 📻 Pop Radio
 
-Füge die Website eines Radiosenders ein, zum Beispiel `1live.de`. Pop Radio öffnet dann ein Popup mit:
+Such deinen Sender auf [radio.de](https://www.radio.de) und füge die Adresse ein, zum Beispiel `https://www.radio.de/s/1live`. Pop Radio öffnet dann ein Popup mit:
 
 - 🎵 **dem Song, der gerade läuft**, samt Cover, Verlauf und optionaler Benachrichtigung bei Songwechsel
 - 📰 **den neuesten News** des Senders (RSS-Feed oder Schlagzeilen von der Website)
 - ▶ **einem Player**, mit dem du den Sender direkt hören kannst
 
 Die Popups lassen sich verschieben oder mit `↗` als eigenes Mini-Fenster öffnen. Bei Sendern mit mehreren Streams kannst du den Kanal wählen.
+
+Auch Links von radio.net, radio.at, radio.fr, radio.it, radio.es, radio.pt, radio.pl, radio.dk und radio.se funktionieren. Die Website eines Senders (z. B. `fm4.orf.at`) geht als Notlösung ebenfalls.
 
 ---
 
@@ -92,11 +94,11 @@ Dann im Browser [http://localhost:3000](http://localhost:3000) öffnen.
 
 Browser dürfen fremde Websites nicht direkt auslesen (CORS). Deshalb erledigt das ein kleiner Node-Server:
 
-1. **Sender erkennen:** Der Server lädt die Website und sucht passende Streams bei [radio-browser.info](https://www.radio-browser.info) sowie direkt im Seitenquelltext.
-2. **Was läuft gerade?** Er verbindet sich kurz mit dem Audiostream und liest die ICY-Metadaten (`StreamTitle`) aus. Das Cover kommt von der iTunes-Suche.
-3. **News:** Er sucht RSS-/Atom-Feeds der Website. Gibt es keine, nimmt er die Schlagzeilen von der Startseite.
+1. **Sender erkennen:** Aus dem radio.de-Link liest der Server die Sender-ID und holt über die radio.de-Schnittstelle Name, Logo, Streams und die Homepage des Senders. Bei einer normalen Sender-Website sucht er stattdessen bei [radio-browser.info](https://www.radio-browser.info) und im Seitenquelltext nach Streams.
+2. **Was läuft gerade?** Den Songtitel liefert radio.de. Kennt radio.de ihn nicht, verbindet sich der Server kurz mit dem Audiostream und liest die ICY-Metadaten (`StreamTitle`) aus. Das Cover kommt von der iTunes-Suche.
+3. **News:** Er sucht RSS-/Atom-Feeds auf der Homepage des Senders. Gibt es keine, nimmt er die Schlagzeilen von der Startseite.
 
-**Grenzen:** Manche Sender (z. B. Antenne Bayern) schicken nur ihren Slogan statt des Songtitels im Stream. Manche laden ihre News nur per JavaScript nach. In beiden Fällen gibt es dann keine Songinfo bzw. keine News.
+**Grenzen:** Manche Sender (z. B. Antenne Bayern) laden ihre News nur per JavaScript nach. Dann zeigt das Popup keine News an. Die radio.de-Schnittstelle ist nicht offiziell dokumentiert und kann sich jederzeit ändern.
 
 > ⚠️ Der Server ruft beliebige URLs ab, die man ihm gibt. Betreibe ihn nur in deinem Heimnetz und stell ihn nicht offen ins Internet.
 

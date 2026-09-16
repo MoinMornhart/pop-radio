@@ -192,14 +192,21 @@ function createPopup(input, { windowed = false } = {}) {
     const ch = station?.channels[channelIdx];
     if (!ch) return;
     try {
-      const np = await api('/api/nowplaying', { stream: ch.stream, name: ch.name });
+      const params = { stream: ch.stream, name: station.name };
+      if (station.radioDeId) params.rid = station.radioDeId;
+      const np = await api('/api/nowplaying', params);
       if (station?.channels[channelIdx] !== ch) return; // Kanal inzwischen gewechselt
       if (!np.ok) {
         setLive(false, 'Stream nicht erreichbar');
         return;
       }
       setLive(true);
-      metaEl.textContent = [np.show || np.stationName, np.genre, np.bitrate && `${np.bitrate} kbit/s`].filter(Boolean).join(' · ');
+      metaEl.textContent = [
+        np.show || np.stationName || station.city,
+        np.genre || station.genres?.slice(0, 2).join(', '),
+        np.bitrate && `${np.bitrate} kbit/s`,
+        np.source && `via ${np.source}`,
+      ].filter(Boolean).join(' · ');
       if (!np.streamTitle) {
         songEl.textContent = 'Keine Titelinfo im Stream';
         artistEl.textContent = 'Der Sender verrät leider nicht, was gerade läuft.';
@@ -379,11 +386,12 @@ async function addStation(raw) {
   btn.disabled = true;
   try {
     const st = await api('/api/station', { url: input });
-    const list = loadStations().filter((s) => s.homepage !== st.homepage);
+    const list = loadStations().filter((s) => (s.key || s.homepage) !== st.key);
     list.unshift({
       input,
+      key: st.key,
       name: st.name,
-      host: st.host,
+      host: [st.source, st.city, st.genres?.[0]].filter(Boolean).join(' · '),
       homepage: st.homepage,
       logo: st.logo,
       description: st.description,
