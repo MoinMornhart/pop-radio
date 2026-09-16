@@ -512,12 +512,11 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 
 // Auslieferbare Dateien einmal beim Start einlesen. Anfragen werden nur nachgeschlagen
 // und nie zu Dateipfaden zusammengesetzt (neue Dateien brauchen einen Neustart).
-function listFiles(dir, prefix = '') {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => e.isDirectory()
-    ? listFiles(path.join(dir, e.name), `${prefix}/${e.name}`)
-    : [[`${prefix}/${e.name}`, path.join(dir, e.name)]]);
-}
-const STATIC_FILES = new Map(listFiles(PUBLIC_DIR));
+const STATIC_FILES = new Map(
+  fs.readdirSync(PUBLIC_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => [`/${entry.name}`, path.join(PUBLIC_DIR, entry.name)]),
+);
 
 function serveStatic(res, pathname) {
   const file = STATIC_FILES.get(pathname === '/' ? '/index.html' : pathname);
