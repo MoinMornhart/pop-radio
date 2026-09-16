@@ -24,6 +24,7 @@ TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
 GN="\e[32m"; YW="\e[33m"; RD="\e[31m"; BL="\e[36m"; CL="\e[0m"
 msg()  { echo -e " ${BL}➜${CL} $*"; }
 ok()   { echo -e " ${GN}✔${CL} $*"; }
+warn() { echo -e " ${YW}⚠${CL} $*"; }
 fail() { echo -e " ${RD}✘ $*${CL}"; exit 1; }
 
 cat <<'EOF'
@@ -42,6 +43,9 @@ command -v pct >/dev/null 2>&1 || fail "Dieses Skript muss auf einem Proxmox-VE-
 [[ $EUID -eq 0 ]] || fail "Bitte als root ausführen."
 
 CTID="${CTID:-$(pvesh get /cluster/nextid)}"
+if pct status "$CTID" >/dev/null 2>&1 || qm status "$CTID" >/dev/null 2>&1; then
+  fail "Die ID $CTID ist schon vergeben. Wähle eine andere, z. B.: CTID=150 bash -c \"\$(curl …)\""
+fi
 if [[ -z "${STORAGE:-}" ]]; then
   if pvesm status -content rootdir 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "local-lvm"; then
     STORAGE="local-lvm"
@@ -60,28 +64,63 @@ if [[ -t 0 ]]; then
 fi
 
 # ---------- Template ----------
-msg "Suche aktuelles Debian-Template …"
-pveam update >/dev/null
-TEMPLATE="$(pveam available --section system | awk '{print $2}' | grep -E '^debian-1[2-9]-standard' | sort -V | tail -n1)"
-[[ -n "$TEMPLATE" ]] || fail "Kein Debian-Template gefunden."
-if ! pveam list "$TEMPLATE_STORAGE" | grep -q "$TEMPLATE"; then
-  msg "Lade $TEMPLATE herunter …"
-  pveam download "$TEMPLATE_STORAGE" "$TEMPLATE" >/dev/null
-fi
-ok "Template: $TEMPLATE"
+ARCH="$(dpkg --print-architecture)" # amd64, arm64, …
+msg "Suche Debian-Templates für ${ARCH} …"
+pveam update >/dev/null || warn "Template-Liste konnte nicht aktualisiert werden, nutze die vorhandene."
+# Neuestes Template je Debian-Version, neueste Version zuerst (z. B. 13, dann 12)
+mapfile -t TEMPLATES < <(
+  pveam available --section system | awk '{print $2}' \
+    | grep -E "^debian-${OS_VERSION:-1[2-9]}-standard_.*_${ARCH}\.tar\.(zst|gz|xz)$" \
+    | sort -V \
+    | awk -F'[-_]' '{ latest[$2] = $0 } END { for (v in latest) print v, latest[v] }' \
+    | sort -rn | awk '{print $2}'
+)
+[[ ${#TEMPLATES[@]} -gt 0 ]] || fail "Kein passendes Debian-Template für ${ARCH} gefunden."
 
 # ---------- Container ----------
-msg "Erstelle LXC-Container $CTID …"
-pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
-  --hostname "$CT_HOSTNAME" \
-  --cores "$CORES" --memory "$MEMORY" --swap 256 \
-  --rootfs "${STORAGE}:${DISK}" \
-  --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp" \
-  --unprivileged 1 --features nesting=1 \
-  --onboot 1 --tags "radio" \
-  --description "Pop Radio – ${REPO_URL%.git}" >/dev/null
-pct start "$CTID"
-ok "Container gestartet"
+# Nur Container entfernen, die dieses Skript selbst angelegt hat (ID war vorher frei)
+cleanup_ct() {
+  pct stop "$CTID" >/dev/null 2>&1 || true
+  pct destroy "$CTID" --purge >/dev/null 2>&1 || true
+}
+
+STARTED=""
+for TEMPLATE in "${TEMPLATES[@]}"; do
+  if ! pveam list "$TEMPLATE_STORAGE" | grep -q "$TEMPLATE"; then
+    msg "Lade $TEMPLATE herunter …"
+    pveam download "$TEMPLATE_STORAGE" "$TEMPLATE" >/dev/null || { warn "Download fehlgeschlagen."; continue; }
+  fi
+
+  msg "Erstelle LXC-Container $CTID mit $TEMPLATE …"
+  if ! pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
+    --hostname "$CT_HOSTNAME" \
+    --arch "$ARCH" \
+    --cores "$CORES" --memory "$MEMORY" --swap 256 \
+    --rootfs "${STORAGE}:${DISK}" \
+    --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp" \
+    --unprivileged 1 --features nesting=1 \
+    --onboot 1 --tags "radio" \
+    --description "Pop Radio – ${REPO_URL%.git}" >/dev/null; then
+    warn "Container konnte nicht erstellt werden."
+    cleanup_ct
+    continue
+  fi
+
+  if pct start "$CTID" >/dev/null 2>&1; then
+    STARTED=1
+    break
+  fi
+  warn "Container startet nicht. Letzte Zeilen aus dem Debug-Log:"
+  pct start "$CTID" --debug 2>&1 | tail -n 20 | sed 's/^/     /' || true
+  cleanup_ct
+  if [[ "$TEMPLATE" != "${TEMPLATES[-1]}" ]]; then
+    warn "Versuche es mit dem nächstälteren Debian …"
+  fi
+done
+[[ -n "$STARTED" ]] || fail "Kein Container ließ sich starten. Bitte die Log-Zeilen oben in einem GitHub-Issue posten."
+ok "Container gestartet ($TEMPLATE)"
+
+trap 'echo -e " ${RD}✘ Abbruch in Zeile $LINENO.${CL} Container $CTID bleibt zur Fehlersuche bestehen (entfernen: pct destroy $CTID)."' ERR
 
 msg "Warte auf Netzwerk …"
 for _ in $(seq 1 30); do

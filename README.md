@@ -53,6 +53,7 @@ CTID=150 MEMORY=1024 BRIDGE=vmbr1 PORT=8080 bash -c "$(curl -fsSL https://raw.gi
 | `DISK`             | `4`                | Festplatte in GB                |
 | `STORAGE`          | `local-lvm`\*      | Storage für den Container       |
 | `TEMPLATE_STORAGE` | `local`            | Storage für das Debian-Template |
+| `OS_VERSION`       | neueste (13 → 12)  | Debian-Version, z. B. `12`      |
 | `BRIDGE`           | `vmbr0`            | Netzwerk-Bridge                 |
 | `PORT`             | `3000`             | Port der Weboberfläche          |
 
