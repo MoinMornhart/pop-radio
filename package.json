@@ -1,0 +1,12 @@
+{
+  "name": "pop-radio",
+  "version": "1.0.0",
+  "description": "Radiosender-Website einfügen und im Popup sehen, welche Musik läuft und was es Neues gibt",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

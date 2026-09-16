@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pop Radio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app" id="app">
+    <header class="hero">
+      <h1><span class="logo">📻</span> Pop Radio</h1>
+      <p>Füge die Website eines Radiosenders ein. Im Popup siehst du dann, welcher Song gerade läuft, und die neuesten News.</p>
+      <form id="add-form" class="add-form" autocomplete="off">
+        <input id="url-input" type="text" placeholder="z. B. 1live.de, radiobob.de, bigfm.de …" aria-label="Website des Radiosenders">
+        <button type="submit" id="add-btn">Hinzufügen</button>
+      </form>
+      <p class="hint" id="status"></p>
+      <div class="examples">
+        Beispiele:
+        <button type="button" data-example="https://www.radiobob.de">RADIO BOB!</button>
+        <button type="button" data-example="https://www.1live.de">1LIVE</button>
+        <button type="button" data-example="https://www.antenne.de">ANTENNE BAYERN</button>
+        <button type="button" data-example="https://www.fm4.orf.at">FM4</button>
+      </div>
+    </header>
+
+    <section>
+      <h2 class="section-title">Deine Sender</h2>
+      <div id="stations" class="stations"></div>
+      <p id="empty" class="empty">Noch keine Sender hinzugefügt.</p>
+    </section>
+  </main>
+
+  <div id="popups"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
