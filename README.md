@@ -37,17 +37,20 @@ Das Skript erstellt einen schlanken Debian-LXC-Container (1 CPU, 512 MB RAM, 4 G
 
 ### 🔄 Update
 
-In der Konsole des Containers:
+**Auf dem Proxmox-Host:** Führ einfach denselben Befehl wie bei der Installation erneut aus. Das Skript erkennt den vorhandenen Pop-Radio-Container und aktualisiert ihn. Eine abgebrochene Installation holt es dabei nach.
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/MoinMornhart/pop-radio/main/proxmox/pop-radio.sh)"
+```
+
+**In der Konsole des Containers** (Proxmox → Container → Konsole):
 
 ```bash
 update
 ```
 
-Oder direkt vom Proxmox-Host aus (`<CTID>` durch die Container-ID ersetzen):
-
-```bash
-pct exec <CTID> -- update
-```
+> `update` gibt es nur **im Container**, nicht in der Shell des Proxmox-Hosts. Dort nimmst du den Befehl oben.
+> Willst du trotz vorhandenem Container einen weiteren anlegen, stell `MODE=install` vor den Befehl.
 
 ### ⚙️ Eigene Einstellungen (optional)
 

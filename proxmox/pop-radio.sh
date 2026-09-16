@@ -4,8 +4,11 @@
 #  Auf der Proxmox-Shell (Host) ausführen:
 #    bash -c "$(curl -fsSL https://raw.githubusercontent.com/MoinMornhart/pop-radio/main/proxmox/pop-radio.sh)"
 #
+#  Ist Pop Radio schon installiert, aktualisiert derselbe Befehl den Container.
+#
 #  Anpassbar über Umgebungsvariablen, z. B.:
 #    CTID=150 MEMORY=1024 BRIDGE=vmbr1 bash -c "$(curl -fsSL ...)"
+#    MODE=install  → immer einen neuen Container anlegen
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -41,6 +44,67 @@ EOF
 # ---------- Prüfungen ----------
 command -v pct >/dev/null 2>&1 || fail "Dieses Skript muss auf einem Proxmox-VE-Host laufen."
 [[ $EUID -eq 0 ]] || fail "Bitte als root ausführen."
+
+# Pop Radio im Container installieren bzw. reparieren (Repo klonen, Installer aus dem Klon starten –
+# nichts wird per curl | bash ausgeführt)
+install_app() {
+  local id="$1"
+  msg "Installiere $APP im Container $id (dauert 1–2 Minuten) …"
+  pct exec "$id" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq git curl ca-certificates >/dev/null"
+  pct exec "$id" -- bash -c "test -d /opt/pop-radio/.git || git clone -q --branch '$BRANCH' '$REPO_URL' /opt/pop-radio"
+  pct exec "$id" -- env REPO_URL="$REPO_URL" BRANCH="$BRANCH" PORT="$PORT" bash /opt/pop-radio/scripts/install.sh
+}
+
+show_result() {
+  local id="$1" ip port
+  ip="$(pct exec "$id" -- hostname -I | awk '{print $1}')"
+  port="$(pct exec "$id" -- systemctl show pop-radio -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^PORT=//p')"
+  echo
+  echo -e "   Öffne im Browser:  ${YW}http://${ip}:${port:-$PORT}${CL}"
+  echo -e "   Update:            diesen Befehl erneut ausführen – oder ${YW}update${CL} in der Konsole von Container ${id}"
+  echo
+}
+
+# ---------- Schon installiert? Dann aktualisieren ----------
+if [[ "${MODE:-}" != "install" ]]; then
+  EXISTING=()
+  for id in $(pct list | awk 'NR>1 {print $1}'); do
+    if grep -qi 'pop-radio' <<<"$(pct config "$id" 2>/dev/null)"; then EXISTING+=("$id"); fi
+  done
+  if [[ -n "${CTID:-}" ]]; then
+    # Ausdrücklich gewählte ID: nur diese aktualisieren, falls es ein Pop-Radio-Container ist
+    if [[ " ${EXISTING[*]} " == *" $CTID "* ]]; then EXISTING=("$CTID"); else EXISTING=(); fi
+  fi
+
+  if [[ ${#EXISTING[@]} -gt 0 ]]; then
+    UPDATE_ID="${EXISTING[0]}"
+    if [[ ${#EXISTING[@]} -gt 1 ]]; then
+      warn "Mehrere Pop-Radio-Container: ${EXISTING[*]}. Einen anderen wählst du mit CTID=<ID>."
+    fi
+    echo -e "  $APP ist schon installiert in Container ${YW}${UPDATE_ID}${CL}."
+    answer="j"
+    if [[ -t 0 ]]; then
+      read -r -p "  Jetzt aktualisieren? [J/n]  (n = zusätzlichen Container anlegen) " answer
+    fi
+    if [[ "${answer:-j}" =~ ^[JjYy]$ ]]; then
+      if [[ "$(pct status "$UPDATE_ID" | awk '{print $2}')" != "running" ]]; then
+        msg "Starte Container $UPDATE_ID …"
+        pct start "$UPDATE_ID"
+        sleep 5
+      fi
+      if pct exec "$UPDATE_ID" -- test -x /opt/pop-radio/scripts/update.sh; then
+        pct exec "$UPDATE_ID" -- bash /opt/pop-radio/scripts/update.sh
+      else
+        warn "Installation im Container ist unvollständig – wird nachgeholt."
+        install_app "$UPDATE_ID"
+      fi
+      ok "${GN}${APP} ist auf dem neuesten Stand.${CL}"
+      show_result "$UPDATE_ID"
+      exit 0
+    fi
+    unset CTID
+  fi
+fi
 
 CTID="${CTID:-$(pvesh get /cluster/nextid)}"
 if pct status "$CTID" >/dev/null 2>&1 || qm status "$CTID" >/dev/null 2>&1; then
@@ -131,15 +195,8 @@ pct exec "$CTID" -- getent hosts deb.debian.org >/dev/null 2>&1 || fail "Contain
 ok "Netzwerk bereit"
 
 # ---------- App installieren ----------
-msg "Installiere $APP im Container (dauert 1–2 Minuten) …"
-pct exec "$CTID" -- bash -c "export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq git curl ca-certificates >/dev/null"
-# Repo klonen und den Installer aus dem Klon starten (nichts wird per curl | bash ausgeführt)
-pct exec "$CTID" -- git clone -q --branch "$BRANCH" "$REPO_URL" /opt/pop-radio
-pct exec "$CTID" -- env REPO_URL="$REPO_URL" BRANCH="$BRANCH" PORT="$PORT" bash /opt/pop-radio/scripts/install.sh
-
-IP="$(pct exec "$CTID" -- hostname -I | awk '{print $1}')"
+install_app "$CTID"
+pct exec "$CTID" -- test -x /usr/bin/update || fail "Der Befehl 'update' fehlt im Container – Installation unvollständig."
 echo
 ok "${GN}${APP} ist fertig installiert!${CL}"
-echo -e "   Öffne im Browser:  ${YW}http://${IP}:${PORT}${CL}"
-echo -e "   Update:            ${YW}pct exec ${CTID} -- update${CL}   (oder 'update' in der Container-Konsole)"
-echo
+show_result "$CTID"

@@ -52,6 +52,16 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 git config --system --get-all safe.directory 2>/dev/null | grep -qx "$APP_DIR" || git config --system --add safe.directory "$APP_DIR"
 ok "Code liegt in $APP_DIR"
 
+# "update"-Befehl wie bei den Community-Scripts – direkt nach dem Download anlegen,
+# damit er auch dann existiert, wenn ein späterer Schritt scheitert (update repariert das)
+cat >/usr/bin/update <<'EOF'
+#!/usr/bin/env bash
+exec bash /opt/pop-radio/scripts/update.sh "$@"
+EOF
+chmod +x /usr/bin/update
+rm -f /usr/local/bin/update # alter Ort
+ok "Befehl 'update' eingerichtet"
+
 msg "Richte Dienst ein …"
 cat >/etc/systemd/system/pop-radio.service <<EOF
 [Unit]
@@ -74,13 +84,6 @@ EOF
 systemctl daemon-reload
 systemctl enable -q --now pop-radio
 systemctl restart pop-radio
-
-# "update"-Befehl wie bei den Community-Scripts
-cat >/usr/local/bin/update <<'EOF'
-#!/usr/bin/env bash
-exec bash /opt/pop-radio/scripts/update.sh "$@"
-EOF
-chmod +x /usr/local/bin/update
 
 cat >/etc/motd <<EOF
 
