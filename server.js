@@ -515,7 +515,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 const STATIC_FILES = new Map(
   fs.readdirSync(PUBLIC_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile())
-    .map((entry) => [`/${entry.name}`, path.join(PUBLIC_DIR, entry.name)]),
+    // entry.name stammt aus readdirSync, nicht aus der Anfrage
+    .map((entry) => [`/${entry.name}`, path.join(PUBLIC_DIR, entry.name)]), // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
 );
 
 function serveStatic(res, pathname) {
