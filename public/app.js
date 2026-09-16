@@ -1,8 +1,18 @@
 // Pop Radio – Frontend
 
 const STORAGE_KEY = 'popradio.stations';
+const LAYOUT_KEY = 'popradio.layouts';
+
+// Popup-Vorlagen: w/h = Fenstergröße, wenn das Popup als eigenes Fenster läuft
+const LAYOUTS = {
+  standard: { label: 'Standard', w: 400, h: 680 },
+  bar: { label: 'Leiste', w: 780, h: 110 },
+  compact: { label: 'Kompakt', w: 360, h: 290 },
+  cover: { label: 'Nur Cover', w: 340, h: 400 },
+};
 const NOWPLAYING_INTERVAL = 20_000;
 const NEWS_INTERVAL = 5 * 60_000;
+const TICKER_INTERVAL = 8_000;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -32,6 +42,49 @@ function saveStations(list) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch {}
 }
 
+// Gewählte Vorlage pro Sender merken ("*" = zuletzt benutzte als Standard für neue Sender)
+function loadLayout(input) {
+  try {
+    const map = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {};
+    return map[input] || map['*'] || 'standard';
+  } catch { return 'standard'; }
+}
+function saveLayout(input, layout) {
+  try {
+    const map = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {};
+    map[input] = layout;
+    map['*'] = layout;
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+// Kleines Auswahlmenü an einem Knopf; zweiter Klick auf den Knopf schließt es wieder
+function toggleMenu(anchor, items) {
+  if (anchor.menu?.isConnected) { anchor.menu.remove(); return; }
+  const menu = h('div', { class: 'layout-menu', role: 'menu' },
+    ...items.map((it) => h('button', {
+      role: 'menuitemradio',
+      'aria-checked': String(it.active),
+      class: it.active ? 'active' : null,
+      onclick: () => { menu.remove(); it.onSelect(); },
+    }, h('span', { class: `layout-icon layout-icon-${it.key}` }), it.label)));
+  document.body.append(menu);
+  anchor.menu = menu;
+  const r = anchor.getBoundingClientRect();
+  const top = r.bottom + 6 + menu.offsetHeight > window.innerHeight ? r.top - 6 - menu.offsetHeight : r.bottom + 6;
+  menu.style.top = `${Math.max(8, top)}px`;
+  menu.style.left = `${Math.min(Math.max(8, r.right - menu.offsetWidth), window.innerWidth - menu.offsetWidth - 8)}px`;
+  const outside = (e) => {
+    if (menu.contains(e.target) || anchor.contains(e.target)) return;
+    menu.remove();
+  };
+  const cleanup = new MutationObserver(() => {
+    if (!menu.isConnected) { document.removeEventListener('pointerdown', outside); cleanup.disconnect(); }
+  });
+  cleanup.observe(document.body, { childList: true });
+  document.addEventListener('pointerdown', outside);
+}
+
 const rtf = new Intl.RelativeTimeFormat('de', { numeric: 'auto' });
 function timeAgo(dateStr) {
   const d = new Date(dateStr);
@@ -55,23 +108,31 @@ async function findCover(artist, song) {
   if (!artist || !song) return null;
   const key = `${artist}|${song}`.toLowerCase();
   if (coverCache.has(key)) return coverCache.get(key);
-  try {
-    const term = `${artist} ${song}`.replace(/\(.*?\)|feat\..*/gi, '').trim();
-    const res = await fetch(`https://itunes.apple.com/search?${new URLSearchParams({ term, entity: 'song', limit: 1, country: 'DE' })}`);
-    const data = await res.json();
-    const url = data.results?.[0]?.artworkUrl100?.replace('100x100', '600x600') || null;
-    coverCache.set(key, url);
-    return url;
-  } catch {
-    return null;
+  const cleanSong = song.replace(/\(.*?\)|\[.*?\]/g, '').trim();
+  // Erst alle Künstler, dann nur der erste ("Kygo x Khalid & Gryffin" → "Kygo")
+  const mainArtist = artist.split(/\s+(?:x|&|und|and|vs\.?|feat\.?|ft\.?)\s+|,|\//i)[0].trim();
+  const terms = [...new Set([`${artist} ${cleanSong}`, `${mainArtist} ${cleanSong}`])];
+  let url = null;
+  for (const term of terms) {
+    try {
+      const res = await fetch(`https://itunes.apple.com/search?${new URLSearchParams({ term, entity: 'song', limit: 1, country: 'DE' })}`);
+      const data = await res.json();
+      url = data.results?.[0]?.artworkUrl100?.replace('100x100', '600x600') || null;
+    } catch {
+      return null; // Netzwerkfehler nicht cachen
+    }
+    if (url) break;
   }
+  coverCache.set(key, url);
+  return url;
 }
 
 // ---------- Popup ----------
 
 let popupCount = 0;
 
-function createPopup(input, { windowed = false } = {}) {
+function createPopup(input, options = {}) {
+  const windowed = Boolean(options.windowed);
   let station = null;
   let channelIdx = 0;
   let tab = 'music';
@@ -90,16 +151,28 @@ function createPopup(input, { windowed = false } = {}) {
   const musicTab = h('button', { class: 'active', onclick: () => setTab('music') }, '🎵 Musik');
   const newsTab = h('button', { onclick: () => setTab('news') }, '📰 News');
 
-  const musicView = h('div');
+  const musicView = h('div', { class: 'music-view' });
   const newsView = h('div', { class: 'news', hidden: true });
+  // Nachrichten-Ticker für die Vorlagen "Leiste" und "Kompakt"
+  const tickerEl = h('a', { class: 'ticker', target: '_blank', rel: 'noopener', hidden: true });
+  let newsItems = [];
+  let tickerIdx = 0;
 
+  let layout = LAYOUTS[options.layout] ? options.layout : loadLayout(input);
+  const layoutBtn = h('button', { class: 'icon-btn', title: 'Vorlage wählen', 'aria-haspopup': 'menu', onclick: () => toggleMenu(layoutBtn, Object.entries(LAYOUTS).map(([key, l]) => ({
+    key, label: l.label, active: key === layout, onSelect: () => setLayout(key, true),
+  }))) }, '🎨');
   const bellBtn = h('button', { class: 'icon-btn', title: 'Bei Songwechsel benachrichtigen', onclick: toggleNotify }, '🔔');
   const winBtn = !windowed && h('button', { class: 'icon-btn', title: 'Als eigenes Fenster öffnen', onclick: openWindow }, '↗');
   const closeBtn = !windowed && h('button', { class: 'icon-btn', title: 'Schließen', onclick: close }, '✕');
 
-  const head = h('div', { class: 'popup-head' }, logoEl, h('div', { class: 'title' }, nameEl, statusEl), bellBtn, winBtn, closeBtn);
+  const head = h('div', { class: 'popup-head' },
+    logoEl,
+    h('div', { class: 'title' }, nameEl, statusEl),
+    h('div', { class: 'head-actions' }, layoutBtn, bellBtn, winBtn, closeBtn));
   const el = h('div', { class: 'popup' + (windowed ? ' windowed' : '') },
     head, channelSelect, h('div', { class: 'tabs' }, musicTab, newsTab), bodyEl);
+  setLayout(layout, false);
 
   if (windowed) {
     document.body.replaceChildren(el);
@@ -108,8 +181,30 @@ function createPopup(input, { windowed = false } = {}) {
     el.style.left = `${Math.max(12, window.innerWidth - 390 - offset)}px`;
     el.style.top = `${Math.max(12, 80 + offset)}px`;
     el.addEventListener('pointerdown', () => { el.style.zIndex = ++popupCount + 10; });
-    makeDraggable(el, head);
+    makeDraggable(el);
     $('#popups').append(el);
+    keepInView();
+  }
+
+  function setLayout(key, remember) {
+    layout = LAYOUTS[key] ? key : 'standard';
+    for (const k of Object.keys(LAYOUTS)) el.classList.toggle(`layout-${k}`, k === layout);
+    if (!remember) return;
+    saveLayout(input, layout);
+    if (windowed) {
+      const { w, h: height } = LAYOUTS[layout];
+      window.resizeTo(w + window.outerWidth - window.innerWidth, height + window.outerHeight - window.innerHeight);
+    } else {
+      keepInView();
+    }
+  }
+
+  // Nach einem Vorlagenwechsel darf das Popup nicht aus dem Bild ragen
+  function keepInView() {
+    if (window.innerWidth <= 600) return;
+    const r = el.getBoundingClientRect();
+    if (r.right > window.innerWidth - 12) el.style.left = `${Math.max(12, window.innerWidth - 12 - r.width)}px`;
+    if (r.bottom > window.innerHeight - 12) el.style.top = `${Math.max(12, window.innerHeight - 12 - r.height)}px`;
   }
 
   function setTab(t) {
@@ -134,11 +229,13 @@ function createPopup(input, { windowed = false } = {}) {
   }
 
   function openWindow() {
-    window.open(`?popup=${encodeURIComponent(input)}&ch=${channelIdx}`, '_blank', 'popup,width=400,height=680');
+    const { w, h: height } = LAYOUTS[layout];
+    window.open(`?popup=${encodeURIComponent(input)}&ch=${channelIdx}&layout=${layout}`, '_blank', `popup,width=${w},height=${height}`);
     close();
   }
 
   function close() {
+    layoutBtn.menu?.remove();
     timers.forEach(clearInterval);
     audio.pause();
     audio.src = '';
@@ -146,7 +243,8 @@ function createPopup(input, { windowed = false } = {}) {
   }
 
   // ----- Musik -----
-  const coverEl = h('div', { class: 'cover' }, '🎶');
+  const coverImg = h('img', { alt: '', hidden: true });
+  const coverEl = h('div', { class: 'cover' }, h('span', {}, '🎶'), coverImg);
   const songEl = h('p', { class: 'song' }, '…');
   const artistEl = h('p', { class: 'artist' });
   const metaEl = h('div', { class: 'meta' });
@@ -177,15 +275,13 @@ function createPopup(input, { windowed = false } = {}) {
   audio.addEventListener('pause', () => { playBtn.textContent = '▶'; });
 
   function setCover(url) {
-    if (url) {
-      const img = h('img', { class: 'cover', src: url, alt: '' });
-      coverEl.replaceWith(img);
-      coverEl.__current = img;
-    }
+    if (!url) return;
+    coverImg.src = url;
+    coverImg.hidden = false;
   }
   function resetCover() {
-    const current = coverEl.__current;
-    if (current) { current.replaceWith(coverEl); coverEl.__current = null; }
+    coverImg.hidden = true;
+    coverImg.removeAttribute('src');
   }
 
   async function updateNowPlaying() {
@@ -263,6 +359,9 @@ function createPopup(input, { windowed = false } = {}) {
         items = [];
       }
     }
+    newsItems = items.slice(0, 8);
+    tickerIdx = 0;
+    renderTicker();
     if (!items.length) {
       newsView.replaceChildren(h('p', { class: 'placeholder' }, 'Für diesen Sender wurden keine News gefunden.'));
       return;
@@ -278,6 +377,15 @@ function createPopup(input, { windowed = false } = {}) {
         ),
       )),
     );
+  }
+
+  function renderTicker() {
+    const item = newsItems[tickerIdx % newsItems.length];
+    tickerEl.hidden = !item;
+    if (!item) return;
+    tickerEl.href = item.link;
+    tickerEl.title = item.title;
+    tickerEl.replaceChildren(h('span', { class: 'ticker-label' }, '📰'), ' ', item.title);
   }
 
   function switchChannel() {
@@ -305,8 +413,9 @@ function createPopup(input, { windowed = false } = {}) {
     }
     nameEl.textContent = station.name;
     logoEl.src = station.logo;
+    logoEl.title = station.name;
     if (windowed) document.title = `${station.name} – Pop Radio`;
-    bodyEl.replaceChildren(musicView, newsView);
+    bodyEl.replaceChildren(musicView, newsView, tickerEl);
 
     if (station.channels.length > 1) {
       channelSelect.hidden = false;
@@ -325,29 +434,35 @@ function createPopup(input, { windowed = false } = {}) {
     }
     updateNews();
     timers.push(setInterval(updateNews, NEWS_INTERVAL));
+    timers.push(setInterval(() => { tickerIdx++; renderTicker(); }, TICKER_INTERVAL));
   })();
 
   return el;
 }
 
-function makeDraggable(el, handle) {
-  handle.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button') || window.innerWidth <= 600) return;
+// Standard: nur am Kopf verschiebbar. Kleine Vorlagen: überall außer an Bedienelementen.
+function makeDraggable(el) {
+  el.addEventListener('pointerdown', (e) => {
+    if (window.innerWidth <= 600 || e.button !== 0) return;
+    if (e.target.closest('button, a, input, select')) return;
+    if (el.classList.contains('layout-standard') && !e.target.closest('.popup-head')) return;
     const startX = e.clientX - el.offsetLeft;
     const startY = e.clientY - el.offsetTop;
-    handle.setPointerCapture(e.pointerId);
-    handle.style.cursor = 'grabbing';
+    el.setPointerCapture(e.pointerId);
+    el.classList.add('dragging');
     const move = (ev) => {
       el.style.left = `${Math.min(Math.max(0, ev.clientX - startX), window.innerWidth - 80)}px`;
       el.style.top = `${Math.min(Math.max(0, ev.clientY - startY), window.innerHeight - 50)}px`;
     };
     const up = () => {
-      handle.style.cursor = '';
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
+      el.classList.remove('dragging');
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
     };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', up);
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
   });
 }
 
@@ -415,7 +530,7 @@ async function addStation(raw) {
 
 const popupParam = new URLSearchParams(location.search).get('popup');
 if (popupParam) {
-  createPopup(popupParam, { windowed: true });
+  createPopup(popupParam, { windowed: true, layout: new URLSearchParams(location.search).get('layout') });
 } else {
   renderStations();
   $('#add-form').addEventListener('submit', (e) => { e.preventDefault(); addStation($('#url-input').value); });

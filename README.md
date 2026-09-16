@@ -8,6 +8,19 @@ Such deinen Sender auf [radio.de](https://www.radio.de) und füge die Adresse ei
 
 Die Popups lassen sich verschieben oder mit `↗` als eigenes Mini-Fenster öffnen. Bei Sendern mit mehreren Streams kannst du den Kanal wählen.
 
+### 🎨 Vorlagen
+
+Über `🎨` im Popup wählst du das Aussehen. Die Wahl wird pro Sender gespeichert.
+
+| Vorlage       | Aussehen                                                                        |
+| ------------- | ------------------------------------------------------------------------------- |
+| **Standard**  | Großes Cover, Verlauf der letzten Songs, News-Tab                                |
+| **Leiste**    | Länglich und flach: Logo, Cover, Song, Play-Knopf und wechselnde Schlagzeile     |
+| **Kompakt**   | Kleines Cover neben dem Song, Player und Schlagzeile darunter                     |
+| **Nur Cover** | Großes Cover mit Songtitel darüber; die Knöpfe erscheinen beim Drüberfahren      |
+
+Bei den kleinen Vorlagen kannst du das Popup an jeder freien Stelle anfassen und verschieben.
+
 Auch Links von radio.net, radio.at, radio.fr, radio.it, radio.es, radio.pt, radio.pl, radio.dk und radio.se funktionieren. Die Website eines Senders (z. B. `fm4.orf.at`) geht als Notlösung ebenfalls.
 
 ---
